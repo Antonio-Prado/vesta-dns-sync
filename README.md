@@ -48,6 +48,7 @@ The MX points to a host **inside the customer's domain** (`mail.<domain>`) rathe
 - `bash` 4+, `dig` (`dnsutils` / `bind9-dnsutils`), `openssl`
 - Run as **root** (to read the DKIM private key and, with `--regen`, use the panel CLI)
 - The server hostname (`hostname -f`) must resolve publicly: its A/AAAA records are used to determine the IPs (or set `IP4` / `IP6` manually)
+- `ip` (iproute2), optional: when available, the IPs obtained from DNS must match a public address configured on the server's interfaces, otherwise the script stops. This protects against a tampered DNS answer being published as the domain's A/AAAA. Servers behind NAT (only private addresses on the interfaces) skip the check.
 
 ---
 
@@ -118,7 +119,7 @@ ZONE_DIR=. ./hosting-dns.sh example.com
 ## Output
 
 ```
-================ example.com  (NS: hydrogen.ns.hetzner.com.) ================
+================ example.com  (NS: hydrogen.ns.hetzner.com.; DNSSEC: zona non firmata, controllo non autenticato) ================
 TIPO   NOME                 VALORE
 A      @                    203.0.113.10
                          -> OK
@@ -197,6 +198,7 @@ _dmarc                   300 IN TXT   "v=DMARC1; p=quarantine; rua=mailto:postma
 - **External senders.** If the domain also sends through other services (Google Workspace, Microsoft 365, newsletters, CRMs), add their `include:` mechanisms to SPF manually; the script will then report SPF as `DIVERSO`, which is expected.
 - **CAA locks certificate issuance.** The default `0 issue "letsencrypt.org"` means **only** Let's Encrypt can issue certificates for the domain. If the panel (or acme.sh) falls back to ZeroSSL, or the customer buys a certificate elsewhere, issuance fails with a CAA error. Set `CAA_CA` accordingly or add further `issue` records by hand.
 - **DMARC policy.** `quarantine` is a sensible default once SPF and DKIM pass. For a domain with unknown senders start with `DMARC_POLICY=none` and read the reports.
+- **Trust in DNS answers.** Queries to `PUB_DNS` and to the authoritative nameserver travel in clear UDP and are not validated. The header shows `DNSSEC: validata` when the resolver sets the AD flag for the zone (signed and valid); otherwise every `OK` is only as good as the path to those servers. The server's own IPs are cross-checked against the local interfaces (see Requirements).
 - **Local zones.** If myVesta still has a local DNS zone for a domain whose DNS is external, delete it (`v-delete-dns-domain <user> <domain>`) or stop BIND if unused, to avoid inconsistencies.
 - **Changing the MX moves incoming mail.** If the domain's mailboxes live elsewhere, use `--no-mx`.
 

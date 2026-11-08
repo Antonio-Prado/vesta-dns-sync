@@ -27,8 +27,22 @@ done
 # ---------------- Configurazione ----------------
 PUB_DNS="${PUB_DNS:-1.1.1.1}"                 # resolver pubblico (ignora zone locali)
 SRV_HOST="$(hostname -f)"
-IP4="${IP4:-$(dig +short A "$SRV_HOST" @"$PUB_DNS" | grep -E '^[0-9.]+$' | tail -1 || true)}"
-IP6="${IP6:-$(dig +short AAAA "$SRV_HOST" @"$PUB_DNS" | grep ':' | tail -1 || true)}"
+# IP del server: la risposta DNS non e' autenticata, quindi deve coincidere con un indirizzo
+# pubblico configurato sulle interfacce (se leggibili). Divergenza = stop; IP4=/IP6= forzano.
+loc_ips(){ # $1 4|6: indirizzi globali, esclusi privati/CGNAT/ULA (server dietro NAT -> vuoto)
+  ip -"$1" -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
+    | grep -Eiv '^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|f[cd])' || true
+}
+pick_ip(){ # $1 A|AAAA, $2 4|6, $3 filtro
+  local dns loc; dns=$(dig +short "$1" "$SRV_HOST" @"$PUB_DNS" | grep -E "$3" | tail -1 || true); loc=$(loc_ips "$2")
+  if [[ -n "$dns" && -n "$loc" ]] && ! grep -qxF "$dns" <<<"$loc"; then
+    echo "ERR: $SRV_HOST risolve $dns ma le interfacce hanno $(paste -sd',' - <<<"$loc"): DNS alterato? imposta IP$2=..." >&2
+    return 1
+  fi
+  echo "$dns"
+}
+IP4="${IP4:-$(pick_ip A 4 '^[0-9.]+$')}"
+IP6="${IP6:-$(pick_ip AAAA 6 ':')}"
 SELECTOR="${SELECTOR:-mail}"
 SPF_ALL="${SPF_ALL:--all}"
 DMARC_POLICY="${DMARC_POLICY:-quarantine}"
@@ -56,7 +70,11 @@ if [[ -r "$KEY" ]]; then
 fi
 
 # ---------------- Helper ----------------
-NS=$(dig +short NS "$D" @"$PUB_DNS" | head -1); [[ -n "$NS" ]] || NS="$PUB_DNS"
+NS=$(dig +short NS "$D" @"$PUB_DNS" | head -1); [[ "$NS" =~ ^[a-zA-Z0-9.-]+$ ]] || NS="$PUB_DNS"
+# DNSSEC: flag AD dal resolver se la zona e' firmata e valida. Solo informativo: senza firma
+# il verdetto vale quanto la fiducia nel percorso verso PUB_DNS e NS.
+if dig +adflag NS "$D" @"$PUB_DNS" 2>/dev/null | grep -Eq '^;; flags:[a-z ]* ad[ ;]'; then DNSSEC="validata"
+else DNSSEC="zona non firmata, controllo non autenticato"; fi
 fq(){ [[ "$1" == "@" ]] && echo "$D" || echo "$1.$D"; }
 q(){ dig +short "$1" "$(fq "$2")" @"$NS" 2>/dev/null || true; }
 txt(){ q TXT "$1" | sed 's/" "//g; s/"//g'; }
@@ -136,7 +154,7 @@ mkdir -p "$ZONE_DIR"; ZF="$ZONE_DIR/$D.zone"
 } > "$ZF"
 
 KO=0
-echo "================ $D  (NS: $NS) ================"
+echo "================ $D  (NS: $NS; DNSSEC: $DNSSEC) ================"
 printf '%-6s %-20s %s\n' "TIPO" "NOME" "VALORE"
 for i in "${!T[@]}"; do
   printf '%-6s %-20s %s\n' "${T[$i]}" "${N[$i]}" "${V[$i]}"
