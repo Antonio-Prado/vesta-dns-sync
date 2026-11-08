@@ -6,6 +6,7 @@
 #   --regen [n]  rigenera la chiave DKIM via pannello (default 2048 bit)
 # Env: PUB_DNS IP4 IP6 SPF_ALL DMARC_POLICY DMARC_RUA CAA_CA SELECTOR TTL ZONE_DIR
 set -euo pipefail
+umask 077   # file zona e copie della chiave leggibili solo da root
 trap 'echo "ERR: errore alla riga $LINENO" >&2' ERR
 export PATH="$PATH:/usr/local/vesta/bin:/usr/local/hestia/bin"
 
@@ -59,6 +60,10 @@ LAB='^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$'
 [[ "$SELECTOR" =~ $LAB ]] || { echo "ERR: SELECTOR '$SELECTOR' non e' un nome valido" >&2; exit 1; }
 
 [[ -n "$IP4" ]] || { echo "ERR: IPv4 di $SRV_HOST non risolto (imposta IP4=...)"; exit 1; }
+
+# ZONE_DIR: creata 700 (umask), niente symlink (lo script scrive da root)
+[[ -e "$ZONE_DIR" ]] || mkdir -p "$ZONE_DIR"
+[[ ! -L "$ZONE_DIR" && -d "$ZONE_DIR" ]] || { echo "ERR: ZONE_DIR '$ZONE_DIR' non e' una directory (o e' un symlink)" >&2; exit 1; }
 
 # ---------------- DKIM ----------------
 if (( REGEN )); then
@@ -151,7 +156,8 @@ else ST="DIVERSO -> $(paste -sd',' - <<<"$CUR_CAA")"; fi
 add CAA "@" "0 issue \"$CAA_CA\"" "$ST"
 
 # ---------------- Output ----------------
-mkdir -p "$ZONE_DIR"; ZF="$ZONE_DIR/$D.zone"
+ZF="$ZONE_DIR/$D.zone"
+[[ -L "$ZF" ]] && { echo "ERR: $ZF e' un symlink, non lo sovrascrivo" >&2; exit 1; }
 {
   echo "; $D - generato $(date '+%F %T') da hosting-dns.sh (SOA/NS gestiti da Hetzner)"
   echo "\$ORIGIN $D."

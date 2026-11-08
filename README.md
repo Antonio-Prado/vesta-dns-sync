@@ -112,7 +112,7 @@ ZONE_DIR=. ./hosting-dns.sh example.com
 | `DMARC_RUA`    | `postmaster@<domain>`   | Address receiving DMARC aggregate reports. |
 | `CAA_CA`       | `letsencrypt.org`       | Certificate authority allowed by the CAA record. |
 | `TTL`          | `300`                   | TTL written in the zone file. |
-| `ZONE_DIR`     | `/root/dns-zones`       | Where the zone file is saved. |
+| `ZONE_DIR`     | `/root/dns-zones`       | Where the zone file is saved. Created with mode 700; symlinks are refused. |
 
 ---
 
