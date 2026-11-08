@@ -64,7 +64,7 @@ install -m 700 hosting-dns.sh /root/hosting-dns.sh
 ## Usage
 
 ```
-hosting-dns.sh <domain> [--mx <sub>] [--no-mx] [--regen [bits]]
+hosting-dns.sh <domain> [--mx <sub>] [--no-mx] [--regen [bits]] [--yes]
 ```
 
 | Option          | Description |
@@ -72,7 +72,8 @@ hosting-dns.sh <domain> [--mx <sub>] [--no-mx] [--regen [bits]]
 | `<domain>`      | Domain to process (required). |
 | `--mx <sub>`    | Subdomain used as mail host. Default: `mail` → `mail.<domain>`. |
 | `--no-mx`       | Incoming mail is handled elsewhere (Google Workspace, Microsoft 365, another server). Skips MX, `mail`, `webmail` and SRV records; SPF authorizes only this server's IPs for outgoing mail. |
-| `--regen [bits]`| Regenerates the domain's DKIM key through the panel CLI (`v-delete-mail-domain-dkim` + `v-add-mail-domain-dkim`) before generating records. Default 2048 bits. **The old key stops working immediately**: publish the new record right away. |
+| `--regen [bits]`| Regenerates the domain's DKIM key through the panel CLI (`v-delete-mail-domain-dkim` + `v-add-mail-domain-dkim`) before generating records. Default 2048 bits. **The old key stops working immediately**: publish the new record right away. Asks for confirmation on a terminal and saves the old key in `ZONE_DIR` (mode 600) before deleting it. |
+| `--yes`         | Skip the `--regen` confirmation (required when stdin is not a terminal). |
 
 ### Examples
 
@@ -194,7 +195,7 @@ _dmarc                   300 IN TXT   "v=DMARC1; p=quarantine; rua=mailto:postma
 ## Notes and caveats
 
 - **DKIM and 255-char strings.** A 2048-bit key produces a TXT value of ~400 characters. DNS strings are limited to 255 characters, so the script splits the value into quoted chunks (`"..." "..."`). Resolvers concatenate them transparently. Hetzner does not split long values automatically.
-- **Don't regenerate keys from the panel and from the script at random.** Each regeneration creates a new key; only the one in `/etc/exim4/domains/<domain>/dkim.pem` is used for signing. Always publish what the script prints.
+- **Don't regenerate keys from the panel and from the script at random.** Each regeneration creates a new key; only the one in `/etc/exim4/domains/<domain>/dkim.pem` is used for signing. Always publish what the script prints. To roll back, copy the saved `<domain>.dkim.pem.<timestamp>` from `ZONE_DIR` over `dkim.pem` and restart Exim.
 - **External senders.** If the domain also sends through other services (Google Workspace, Microsoft 365, newsletters, CRMs), add their `include:` mechanisms to SPF manually; the script will then report SPF as `DIVERSO`, which is expected.
 - **CAA locks certificate issuance.** The default `0 issue "letsencrypt.org"` means **only** Let's Encrypt can issue certificates for the domain. If the panel (or acme.sh) falls back to ZeroSSL, or the customer buys a certificate elsewhere, issuance fails with a CAA error. Set `CAA_CA` accordingly or add further `issue` records by hand.
 - **DMARC policy.** `quarantine` is a sensible default once SPF and DKIM pass. For a domain with unknown senders start with `DMARC_POLICY=none` and read the reports.

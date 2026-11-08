@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
 # hosting-dns.sh - Record DNS base per un hosting myVesta (Exim) con DNS esterno Hetzner.
-# Uso: hosting-dns.sh <dominio> [--mx <sub>] [--no-mx] [--regen [bit]]
+# Uso: hosting-dns.sh <dominio> [--mx <sub>] [--no-mx] [--regen [bit]] [--yes]
 #   --mx <sub>   host di posta del cliente (default: mail -> mail.<dominio>)
 #   --no-mx      posta in arrivo su altro provider: niente MX/mail/webmail/SRV
-#   --regen [n]  rigenera la chiave DKIM via pannello (default 2048 bit)
+#   --regen [n]  rigenera la chiave DKIM via pannello (default 2048 bit); chiede conferma,
+#                la vecchia chiave viene salvata in ZONE_DIR
+#   --yes        nessuna conferma (per --regen da script)
 # Env: PUB_DNS IP4 IP6 SPF_ALL DMARC_POLICY DMARC_RUA CAA_CA SELECTOR TTL ZONE_DIR
 set -euo pipefail
 umask 077   # file zona e copie della chiave leggibili solo da root
 trap 'echo "ERR: errore alla riga $LINENO" >&2' ERR
 export PATH="$PATH:/usr/local/vesta/bin:/usr/local/hestia/bin"
 
-usage(){ sed -n '3,7p' "$0"; exit 1; }
+usage(){ sed -n '3,9p' "$0"; exit 1; }
 [[ $# -ge 1 ]] || usage
 D="${1,,}"; shift
 [[ "$D" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$ ]] \
   || { echo "ERR: '$D' non e' un nome di dominio valido" >&2; exit 1; }
-REGEN=0; BITS=2048; MX_SUB="mail"; DO_MX=1
+REGEN=0; BITS=2048; MX_SUB="mail"; DO_MX=1; YES=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --regen) REGEN=1; [[ "${2:-}" =~ ^[0-9]+$ ]] && { BITS="$2"; shift; } ;;
+    --yes)   YES=1 ;;
     --mx)    MX_SUB="${2:?--mx richiede un sottodominio}"; MX_SUB="${MX_SUB,,}"; shift ;;
     --no-mx) DO_MX=0 ;;
     *) usage ;;
@@ -69,6 +72,17 @@ LAB='^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$'
 if (( REGEN )); then
   OWNER=$(v-search-domain-owner "$D" mail 2>/dev/null || true)
   [[ -n "$OWNER" ]] || { echo "ERR: proprietario di $D non trovato nel pannello"; exit 1; }
+  # distruttivo: la vecchia chiave smette di firmare subito. Conferma e copia di sicurezza.
+  if (( ! YES )); then
+    [[ -t 0 ]] || { echo "ERR: --regen senza terminale richiede --yes" >&2; exit 1; }
+    read -rp "Rigenero la chiave DKIM di $D: la posta esce senza firma valida finche' il nuovo record non e' pubblicato. Continuare? [s/N] " R
+    [[ "$R" =~ ^[sSyY]$ ]] || { echo "Annullato."; exit 1; }
+  fi
+  if [[ -r "$KEY" ]]; then
+    BK="$ZONE_DIR/$D.dkim.pem.$(date +%Y%m%d-%H%M%S)"
+    cp -p "$KEY" "$BK" && chmod 600 "$BK"
+    echo ">> Vecchia chiave salvata in $BK (per tornare indietro: ricopiarla in $KEY e riavviare exim)"
+  fi
   echo ">> Rigenero DKIM a $BITS bit per $D (utente $OWNER)"
   v-delete-mail-domain-dkim "$OWNER" "$D" >/dev/null 2>&1 || true
   v-add-mail-domain-dkim "$OWNER" "$D" "$BITS"
