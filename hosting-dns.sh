@@ -12,6 +12,8 @@ export PATH="$PATH:/usr/local/vesta/bin:/usr/local/hestia/bin"
 usage(){ sed -n '3,7p' "$0"; exit 1; }
 [[ $# -ge 1 ]] || usage
 D="${1,,}"; shift
+[[ "$D" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$ ]] \
+  || { echo "ERR: '$D' non e' un nome di dominio valido" >&2; exit 1; }
 REGEN=0; BITS=2048; MX_SUB="mail"; DO_MX=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -58,18 +60,21 @@ NS=$(dig +short NS "$D" @"$PUB_DNS" | head -1); [[ -n "$NS" ]] || NS="$PUB_DNS"
 fq(){ [[ "$1" == "@" ]] && echo "$D" || echo "$1.$D"; }
 q(){ dig +short "$1" "$(fq "$2")" @"$NS" 2>/dev/null || true; }
 txt(){ q TXT "$1" | sed 's/" "//g; s/"//g'; }
-fmt(){ if (( ${#1} > 255 )); then printf '%s' "$1" | fold -w 250 | sed 's/.*/"&"/' | paste -sd' '; else echo "\"$1\""; fi; }
+fmt(){ if (( ${#1} > 255 )); then printf '%s' "$1" | fold -w 250 | sed 's/.*/"&"/' | paste -sd' ' -; else echo "\"$1\""; fi; }
 cnt(){ grep -c . <<<"$1" || true; }
-cmp(){ # $1 attuale (multi-riga), $2 atteso
+chk(){ # $1 attuale (multi-riga), $2 atteso: record di cui deve esistere una sola istanza
   local n; n=$(cnt "$1")
   if   (( n == 0 )); then echo "ASSENTE"
   elif (( n > 1 ));  then echo "$n RECORD -> lasciane uno"
   elif [[ "$1" == "$2" ]]; then echo "OK"
   else echo "DIVERSO -> $1"; fi
 }
-ip_ok(){ # $1 nome, $2 tipo A|AAAA, $3 atteso (segue i CNAME)
-  local re='^[0-9.]+$'; [[ "$2" == AAAA ]] && re=':'
-  cmp "$(q "$2" "$1" | grep -E "$re" | sort -u)" "$3"
+ip_ok(){ # $1 nome, $2 tipo A|AAAA, $3 atteso (segue i CNAME; piu' indirizzi = DIVERSO, non duplicato)
+  local re='^[0-9.]+$' cur; [[ "$2" == AAAA ]] && re=':'
+  cur=$(q "$2" "$1" | grep -E "$re" | sort -u)
+  if   [[ -z "$cur" ]]; then echo "ASSENTE"
+  elif [[ "$cur" == "$3" ]]; then echo "OK"
+  else echo "DIVERSO -> $(paste -sd',' - <<<"$cur")"; fi
 }
 
 T=(); N=(); V=(); S=()
@@ -89,15 +94,15 @@ if (( DO_MX )); then
   CUR_MX=$(q MX @)
   if [[ -z "$CUR_MX" ]]; then ST="ASSENTE"
   elif [[ "$(cnt "$CUR_MX")" == 1 ]] && grep -qi " ${MX_HOST}\.$" <<<"$CUR_MX"; then ST="OK"
-  else ST="DIVERSO -> $(paste -sd',' <<<"$CUR_MX") (posta in arrivo oggi li')"; fi
+  else ST="DIVERSO -> $(paste -sd',' - <<<"$CUR_MX") (posta in arrivo oggi li')"; fi
   add MX "@" "10 ${MX_HOST}." "$ST"
 
-  add SRV "_imaps._tcp"       "0 1 993 ${MX_HOST}." "$(cmp "$(q SRV _imaps._tcp)" "0 1 993 ${MX_HOST}.")"
-  add SRV "_submission._tcp"  "0 1 587 ${MX_HOST}." "$(cmp "$(q SRV _submission._tcp)" "0 1 587 ${MX_HOST}.")"
+  add SRV "_imaps._tcp"       "0 1 993 ${MX_HOST}." "$(chk "$(q SRV _imaps._tcp)" "0 1 993 ${MX_HOST}.")"
+  add SRV "_submission._tcp"  "0 1 587 ${MX_HOST}." "$(chk "$(q SRV _submission._tcp)" "0 1 587 ${MX_HOST}.")"
 fi
 
 SPF="v=spf1$( (( DO_MX )) && echo " mx") ip4:${IP4}${IP6:+ ip6:$IP6} ${SPF_ALL}"
-add TXT "@" "$(fmt "$SPF")" "$(cmp "$(txt @ | grep -i '^v=spf1' || true)" "$SPF")"
+add TXT "@" "$(fmt "$SPF")" "$(chk "$(txt @ | grep -i '^v=spf1' || true)" "$SPF")"
 
 if [[ -n "$PUB" ]]; then
   DKIM="v=DKIM1; k=rsa; p=${PUB}"
@@ -106,19 +111,20 @@ if [[ -n "$PUB" ]]; then
   elif (( $(cnt "$CUR") > 1 )); then ST="$(cnt "$CUR") RECORD -> lasciane uno"
   elif [[ "$(tr -d ' ' <<<"$CUR" | sed -n 's/.*p=\([^;]*\).*/\1/p')" == "$PUB" ]]; then ST="OK"
   else ST="DIVERSO dalla chiave di Exim"; fi
-  grep -q 's=mail' <<<"$CUR" && ST+=" (rimuovi s=mail)"
+  # s=mail non e' valido (s= accetta solo "email" o "*"): segnalalo e non contarlo come OK
+  if grep -q 's=mail' <<<"$CUR"; then [[ "$ST" == OK ]] && ST="CHIAVE OK"; ST+=" (rimuovi s=mail)"; fi
   add TXT "${SELECTOR}._domainkey" "$(fmt "$DKIM")" "$ST [$SIZE bit]"
 else
   echo "ATTENZIONE: chiave DKIM assente ($KEY) -> attiva DKIM nel pannello o usa --regen"
 fi
 
 DMARC="v=DMARC1; p=${DMARC_POLICY}; rua=mailto:${DMARC_RUA}; adkim=r; aspf=r"
-add TXT "_dmarc" "$(fmt "$DMARC")" "$(cmp "$(txt _dmarc | grep -i '^v=DMARC1' || true)" "$DMARC")"
+add TXT "_dmarc" "$(fmt "$DMARC")" "$(chk "$(txt _dmarc | grep -i '^v=DMARC1' || true)" "$DMARC")"
 
 CUR_CAA=$(q CAA @)
 if [[ -z "$CUR_CAA" ]]; then ST="ASSENTE"
 elif grep -q "issue \"$CAA_CA\"" <<<"$CUR_CAA"; then ST="OK"
-else ST="DIVERSO -> $(paste -sd',' <<<"$CUR_CAA")"; fi
+else ST="DIVERSO -> $(paste -sd',' - <<<"$CUR_CAA")"; fi
 add CAA "@" "0 issue \"$CAA_CA\"" "$ST"
 
 # ---------------- Output ----------------
