@@ -144,10 +144,10 @@ File zona importabile su Hetzner: /root/dns-zones/example.com.zone
 | `DIVERSO -> <value>`            | Different from expected; the current value is shown. |
 | `N RECORD -> lasciane uno`      | N records found where only one is allowed (e.g. two SPF or two DKIM records): delete the extras. |
 | `DIVERSO dalla chiave di Exim`  | The published DKIM key does not match the private key Exim signs with: **DKIM will fail**. |
-| `(rimuovi s=mail)`              | The DKIM record contains `s=mail`, which is invalid (`s=` is the service type and accepts only `email` or `*`): remove it. |
+| `CHIAVE OK (rimuovi s=mail)`    | The DKIM key matches but the record contains `s=mail`, which is invalid (`s=` is the service type and accepts only `email` or `*`): remove it. Counted as a record to fix. |
 | `(posta in arrivo oggi li')`    | The current MX points elsewhere: changing it will redirect incoming mail to this server. |
 
-For `www`, `ftp`, `mail` and `webmail` the check resolves the name (following CNAMEs) and verifies it ends on the server IP, so an equivalent A record instead of a CNAME is also reported as `OK`.
+For `www`, `ftp`, `mail` and `webmail` the check resolves the name (following CNAMEs) and verifies it ends on the server IP, so an equivalent A record instead of a CNAME is also reported as `OK`. If the name resolves to other or additional addresses, they are listed after `DIVERSO`.
 
 The PTR check verifies that the reverse DNS of the server IPv4 matches `hostname -f`. The PTR is set at the IP owner (your hosting/VPS provider's panel), not in the domain zone.
 
@@ -195,6 +195,7 @@ _dmarc                   300 IN TXT   "v=DMARC1; p=quarantine; rua=mailto:postma
 - **DKIM and 255-char strings.** A 2048-bit key produces a TXT value of ~400 characters. DNS strings are limited to 255 characters, so the script splits the value into quoted chunks (`"..." "..."`). Resolvers concatenate them transparently. Hetzner does not split long values automatically.
 - **Don't regenerate keys from the panel and from the script at random.** Each regeneration creates a new key; only the one in `/etc/exim4/domains/<domain>/dkim.pem` is used for signing. Always publish what the script prints.
 - **External senders.** If the domain also sends through other services (Google Workspace, Microsoft 365, newsletters, CRMs), add their `include:` mechanisms to SPF manually; the script will then report SPF as `DIVERSO`, which is expected.
+- **CAA locks certificate issuance.** The default `0 issue "letsencrypt.org"` means **only** Let's Encrypt can issue certificates for the domain. If the panel (or acme.sh) falls back to ZeroSSL, or the customer buys a certificate elsewhere, issuance fails with a CAA error. Set `CAA_CA` accordingly or add further `issue` records by hand.
 - **DMARC policy.** `quarantine` is a sensible default once SPF and DKIM pass. For a domain with unknown senders start with `DMARC_POLICY=none` and read the reports.
 - **Local zones.** If myVesta still has a local DNS zone for a domain whose DNS is external, delete it (`v-delete-dns-domain <user> <domain>`) or stop BIND if unused, to avoid inconsistencies.
 - **Changing the MX moves incoming mail.** If the domain's mailboxes live elsewhere, use `--no-mx`.
