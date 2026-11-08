@@ -18,7 +18,7 @@ REGEN=0; BITS=2048; MX_SUB="mail"; DO_MX=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --regen) REGEN=1; [[ "${2:-}" =~ ^[0-9]+$ ]] && { BITS="$2"; shift; } ;;
-    --mx)    MX_SUB="${2:?--mx richiede un sottodominio}"; shift ;;
+    --mx)    MX_SUB="${2:?--mx richiede un sottodominio}"; MX_SUB="${MX_SUB,,}"; shift ;;
     --no-mx) DO_MX=0 ;;
     *) usage ;;
   esac; shift
@@ -52,6 +52,11 @@ TTL="${TTL:-300}"
 ZONE_DIR="${ZONE_DIR:-/root/dns-zones}"
 MX_HOST="${MX_SUB}.${D}"
 KEY="/etc/exim4/domains/$D/dkim.pem"
+
+# --mx e SELECTOR finiscono in query dig e in pattern grep: solo etichette DNS
+LAB='^[a-z0-9]([a-z0-9.-]{0,61}[a-z0-9])?$'
+[[ "$MX_SUB"   =~ $LAB ]] || { echo "ERR: --mx '$MX_SUB' non e' un nome valido" >&2; exit 1; }
+[[ "$SELECTOR" =~ $LAB ]] || { echo "ERR: SELECTOR '$SELECTOR' non e' un nome valido" >&2; exit 1; }
 
 [[ -n "$IP4" ]] || { echo "ERR: IPv4 di $SRV_HOST non risolto (imposta IP4=...)"; exit 1; }
 
