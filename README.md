@@ -54,7 +54,7 @@ The MX points to a host **inside the customer's domain** (`mail.<domain>`) rathe
 ## Installation
 
 ```bash
-curl -O https://github.com/debiano82/vesta-dns-sync/blob/main/hosting-dns.sh
+curl -O https://raw.githubusercontent.com/debiano82/vesta-dns-sync/main/hosting-dns.sh
 install -m 700 hosting-dns.sh /root/hosting-dns.sh
 ```
 
